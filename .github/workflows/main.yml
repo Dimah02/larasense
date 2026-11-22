@@ -1,0 +1,67 @@
+name: Cross-OS Laravel Tests
+
+on:
+  workflow_dispatch:  # Enables manual triggering from the UI
+
+jobs:
+  laravel-tests:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        php: ['8.4']   # was '8.3'; see notes below
+
+    steps:
+      - name: Checkout frozen SHA
+        uses: actions/checkout@v6
+        with:
+          ref: 47fff7f7f465317ac49b208a552e111c34ba9015 # B-032 frozen SHA
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php }}
+          extensions: mbstring, dom, fileinfo, sqlite, pdo_sqlite, intl, zip, gd, sodium, bcmath, curl, openssl
+          coverage: none
+
+      - name: Install Poppler (Ubuntu)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y poppler-utils
+
+      - name: Install Poppler (macOS)
+        if: runner.os == 'macOS'
+        run: brew install poppler
+
+      - name: Install Poppler (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          choco install poppler -y
+          refreshenv
+
+      - name: Verify environment
+        shell: bash
+        run: |
+          php -v
+          php -m
+          php -r "var_dump(extension_loaded('sodium'));"
+          pdftotext -v 2>&1 || true
+
+      - name: Install Composer dependencies
+        run: composer install --no-progress --prefer-dist --optimize-autoloader
+
+      - name: Prepare Laravel environment
+        run: |
+          php -r "file_exists('.env') || copy('.env.example', '.env');"
+          php artisan key:generate
+
+      - name: Run tests
+        run: vendor/bin/phpunit --log-junit /tmp/junit.xml
+        continue-on-error: true
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: junit-${{ matrix.os }}
+          path: /tmp/junit.xml
